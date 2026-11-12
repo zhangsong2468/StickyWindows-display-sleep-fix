@@ -18,21 +18,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # default: the image's preselected Xcode. newest: the highest version installed on the image
-        # (the official 0.5.0 was built with Xcode 27.1).
-        xcode: [default, newest]
+        # Swift 6.3.3 (Xcode 26.6, the image default) crashes in IRGen on this target, on both
+        # architectures, so build with an older toolchain. The image has no Xcode 27, which the
+        # official 0.5.0 was built with.
+        xcode: ["26.5", "26.3"]
     env:
-      # Swift 6.3.3 (Xcode 26.6) crashes compiling the x86_64 slice; the target Mac is Apple silicon.
+      # The target Mac is Apple silicon; skip the Intel slice.
       BUILD_ARCHS: arm64
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          ls -d /Applications/Xcode*.app
-          if [ "${{ matrix.xcode }}" = newest ]; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
-          fi
+          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
           xcodebuild -version
 
       - name: Build and package
