@@ -1,6 +1,7 @@
 # 本地补丁：熄屏误删标签修复 + 键盘与办公增强 + 固定标签
 
 基于 aaronfisher/StickyWindows v0.5.0 官方源码，保留原 LICENSE 和 NOTICE。
+本地构建自 build 54 起版本号标为 1.0.0（仅为本地编号，与上游版本号无关）。
 
 ## 固定标签 Pin（build 53）
 

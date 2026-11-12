@@ -12,7 +12,7 @@ xcodebuild -project StickyWindows.xcodeproj -scheme StickyWindows \
     -configuration Release -derivedDataPath "$PWD/build" \
     ARCHS="${BUILD_ARCHS:-arm64 x86_64}" ONLY_ACTIVE_ARCH=NO \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
-    MARKETING_VERSION=0.5.0 CURRENT_PROJECT_VERSION=53 build
+    MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION=54 build
 
 app="$PWD/build/Build/Products/Release/Sticky Windows.app"
 # A local patch must not silently update back to an upstream build without the fix.
@@ -20,6 +20,6 @@ app="$PWD/build/Build/Products/Release/Sticky Windows.app"
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
 mkdir -p dist
-ditto -c -k --sequesterRsrc --keepParent "$app" "$PWD/dist/StickyWindows-0.5.0-local-53.zip"
+ditto -c -k --sequesterRsrc --keepParent "$app" "$PWD/dist/StickyWindows-1.0.0.zip"
 echo "构建完成：$app"
-echo "安装归档：$PWD/dist/StickyWindows-0.5.0-local-53.zip"
+echo "安装归档：$PWD/dist/StickyWindows-1.0.0.zip"
