@@ -2,6 +2,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Sparkle compares BUILD, so it has to go up with every release.
+VERSION=1.0.1
+BUILD=55
+# Updates come from this repository's releases, signed with its own EdDSA key (private half in the
+# SPARKLE_PRIVATE_KEY secret), not from upstream.
+REPO="${GITHUB_REPOSITORY:-zhangsong2468/StickyWindows-display-sleep-fix}"
+FEED_URL="https://github.com/$REPO/releases/latest/download/appcast.xml"
+SPARKLE_PUBLIC_KEY="4c756yXBowgtk4eXlzavVuhNOKRJVVoLjCgPCFQCPuw="
+
 if ! xcrun --find xcodebuild >/dev/null 2>&1; then
     echo '缺少完整 Xcode。请安装 Xcode 26 或更新版本，并完成首次启动设置。' >&2
     exit 1
@@ -12,14 +21,19 @@ xcodebuild -project StickyWindows.xcodeproj -scheme StickyWindows \
     -configuration Release -derivedDataPath "$PWD/build" \
     ARCHS="${BUILD_ARCHS:-arm64 x86_64}" ONLY_ACTIVE_ARCH=NO \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
-    MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION=54 build
+    MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" build
 
 app="$PWD/build/Build/Products/Release/Sticky Windows.app"
-# A local patch must not silently update back to an upstream build without the fix.
-/usr/libexec/PlistBuddy -c 'Set :SUEnableAutomaticChecks false' "$app/Contents/Info.plist"
-codesign --force --deep --sign - "$app"
+plist="$app/Contents/Info.plist"
+# A local build must never update to an upstream build, which has none of the patches.
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL $FEED_URL" "$plist"
+/usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_PUBLIC_KEY" "$plist"
+/usr/libexec/PlistBuddy -c 'Set :SUEnableAutomaticChecks true' "$plist"
+# SIGN_IDENTITY: a certificate that stays the same from build to build, so macOS keeps the Accessibility
+# grant across updates. Without one the build is ad-hoc signed and every new build has to be granted again.
+codesign --force --deep --sign "${SIGN_IDENTITY:--}" "$app"
 codesign --verify --deep --strict "$app"
 mkdir -p dist
-ditto -c -k --sequesterRsrc --keepParent "$app" "$PWD/dist/StickyWindows-1.0.0.zip"
+ditto -c -k --sequesterRsrc --keepParent "$app" "$PWD/dist/StickyWindows-$VERSION.zip"
 echo "构建完成：$app"
-echo "安装归档：$PWD/dist/StickyWindows-1.0.0.zip"
+echo "安装归档：$PWD/dist/StickyWindows-$VERSION.zip"

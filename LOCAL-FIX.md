@@ -1,7 +1,21 @@
 # 本地补丁：熄屏误删标签修复 + 键盘与办公增强 + 固定标签
 
 基于 aaronfisher/StickyWindows v0.5.0 官方源码，保留原 LICENSE 和 NOTICE。
-本地构建自 build 54 起版本号标为 1.0.0（仅为本地编号，与上游版本号无关）。
+本地构建自 build 54 起版本号标为 1.0.x（仅为本地编号，与上游版本号无关）。
+
+## 自动更新与签名（1.0.1 / build 55 起）
+
+- **更新源**：应用检查本仓库最新 Release 里的 `appcast.xml`
+  （`https://github.com/<仓库>/releases/latest/download/appcast.xml`），不再连接上游官方更新源。
+- **更新包签名**：使用本仓库自己的 EdDSA 密钥。公钥写在 `build-local.sh`，私钥在仓库 Secret `SPARKLE_PRIVATE_KEY`。
+- **代码签名**：使用固定的自签名证书 “Sticky Windows Local Signing”（Secrets `SIGNING_P12_BASE64` / `SIGNING_P12_PASSWORD`），
+  签名身份在各次构建间保持不变，目的是更新后保留辅助功能授权。没有这些 Secret 时退回 ad-hoc 签名且不发布。
+- **发布新版本**：提高 `build-local.sh` 里的 `VERSION` 和 `BUILD`（Sparkle 比较的是 `BUILD`，必须递增）后推送
+  `display-sleep-fix` 分支，工作流会构建并创建 `v<VERSION>` Release（dmg、zip、appcast.xml）。
+  版本号不变的推送只留下运行产物，不会覆盖已有 Release。
+- 密钥和证书的本机备份在 `~/.sticky-windows-signing/`（不在仓库中）。丢失后已安装的版本无法再收到更新，只能手动重装。
+- 仓库必须保持公开，否则下载地址需要登录，更新会失败。
+- 仍未经过 Apple 公证：首次安装需右键 → 打开。从 ad-hoc 版本（≤ 1.0.0）升级到 1.0.1 需手动安装并重新授权一次。
 
 ## 固定标签 Pin（build 53）
 
@@ -68,8 +82,8 @@ bash build-local.sh   # 在仓库根目录执行
 产物以 artifact 形式附在该次运行上。只需要单一架构时可设 `BUILD_ARCHS=arm64`。
 
 脚本使用归档中自带的 Xcode 工程，不依赖 XcodeGen，不使用原作者签名团队。
-输出为本地 ad-hoc 签名，未经过 Apple 公证；安装后可能需要重新授予辅助功能权限。
-本地构建关闭自动更新检查，避免修复被上游未修复版本覆盖。
+本机直接运行脚本时输出为 ad-hoc 签名（可用 `SIGN_IDENTITY` 指定证书），未经过 Apple 公证；ad-hoc 构建安装后需要重新授予辅助功能权限。
+更新源已改为本仓库，不会被上游未修复版本覆盖。
 
 ## 验证状态
 
