@@ -106,7 +106,8 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Launch Sticky Windows at login", isOn: Binding(get: { launchAtLogin.isEnabled }, set: launchAtLogin.setEnabled))
+                // Closure rather than a method reference: Swift 6.2–6.3 crash in IRGen on the reference form.
+                Toggle("Launch Sticky Windows at login", isOn: Binding(get: { launchAtLogin.isEnabled }, set: { launchAtLogin.setEnabled($0) }))
                 if let error = launchAtLogin.errorMessage {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
@@ -134,7 +135,7 @@ private struct GeneralSettings: View {
                         EmptyView()
                     } minimumValueLabel: { Text("Fast") } maximumValueLabel: { Text("Slow") }
                 }
-                Toggle(isOn: Binding(get: { tilingOverride.isEnabled }, set: tilingOverride.setEnabled)) {
+                Toggle(isOn: Binding(get: { tilingOverride.isEnabled }, set: { tilingOverride.setEnabled($0) })) {
                     Text("Let Sticky Windows handle left and right edge drags")
                     Text("Turns off macOS edge tiling while Sticky Windows runs; your setting comes back when Sticky Windows quits.")
                 }

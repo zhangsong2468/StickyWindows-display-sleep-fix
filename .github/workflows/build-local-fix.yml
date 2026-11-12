@@ -15,23 +15,11 @@ jobs:
     # macOS 26 image: Xcode 26 or newer is needed for the Icon Composer app icon.
     runs-on: macos-26
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        # Swift 6.3.3 (Xcode 26.6, the image default) crashes in IRGen on this target, on both
-        # architectures, so build with an older toolchain. The image has no Xcode 27, which the
-        # official 0.5.0 was built with.
-        xcode: ["26.5", "26.3"]
-    env:
-      # The target Mac is Apple silicon; skip the Intel slice.
-      BUILD_ARCHS: arm64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
-          xcodebuild -version
+      - name: Xcode version
+        run: xcodebuild -version
 
       - name: Build and package
         run: bash build-local.sh
@@ -45,6 +33,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: StickyWindows-0.5.0-display-sleep-fix-xcode-${{ matrix.xcode }}
+          name: StickyWindows-0.5.0-display-sleep-fix
           path: dist/*.zip
           if-no-files-found: error
