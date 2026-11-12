@@ -9,6 +9,8 @@ final class TuckButtonController {
     private unowned let manager: ParkingManager
     private var panels: [UUID: TabPanel] = [:]
     private var models: [UUID: TuckButtonModel] = [:]
+    /// Amber covers over the close button of pinned windows, when the user has the close button tuck them.
+    private var closeCovers: [UUID: TabPanel] = [:]
     /// Windows that moved recently: the button hides during a drag and comes back once it settles.
     private var settleTasks: [UUID: Task<Void, Never>] = [:]
     private var hiddenWhileMoving: Set<UUID> = []
@@ -24,13 +26,29 @@ final class TuckButtonController {
     func refresh() {
         let settings = manager.settings
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        var wanted: [UUID: ParkedWindow] = [:]
-        if settings.showTuckButton, let frontPID, let focused = WindowController.focusedWindow(forPID: frontPID) {
+        var inFront: [UUID: ParkedWindow] = [:]
+        if settings.showTuckButton || settings.closeButtonTucksPinned, let frontPID,
+           let focused = WindowController.focusedWindow(forPID: frontPID) {
             for window in manager.parked
             where window.isRevealed && !window.isTransitioning && !hiddenWhileMoving.contains(window.id)
                 && window.window.pid == frontPID && window.window.isSameWindow(as: focused) {
-                wanted[window.id] = window
+                inFront[window.id] = window
             }
+        }
+        let wanted: [UUID: ParkedWindow] = settings.showTuckButton ? inFront : [:]
+        let covered: [UUID: ParkedWindow] = settings.closeButtonTucksPinned ? inFront.filter { $0.value.isPinned } : [:]
+        for (id, panel) in closeCovers where covered[id] == nil {
+            panel.orderOut(nil)
+            closeCovers[id] = nil
+        }
+        for (id, window) in covered {
+            guard let frame = window.window.closeButtonFrame, frame.width > 0 else {
+                closeCovers[id]?.orderOut(nil)
+                continue
+            }
+            let panel = closeCovers[id] ?? makeCloseCover(for: window)
+            panel.setFrame(ScreenGeometry.flip(frame), display: true)
+            panel.orderFrontRegardless()
         }
         for (id, panel) in panels where wanted[id] == nil {
             panel.orderOut(nil)
@@ -54,6 +72,7 @@ final class TuckButtonController {
         guard window.isRevealed else { return }
         hiddenWhileMoving.insert(window.id)
         panels[window.id]?.orderOut(nil)
+        closeCovers[window.id]?.orderOut(nil)
         settleTasks[window.id]?.cancel()
         settleTasks[window.id] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
@@ -104,6 +123,53 @@ final class TuckButtonController {
         }
         panels[window.id] = panel
         return panel
+    }
+}
+
+extension TuckButtonController {
+    /// Sits exactly over the close button, so the click lands here rather than on the window.
+    fileprivate func makeCloseCover(for window: ParkedWindow) -> TabPanel {
+        let model = TuckButtonModel(edge: window.edge)
+        let panel = TabPanel(rootView: CloseCoverView(model: model))
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.ignoresMouseEvents = false
+        panel.collectionBehavior = manager.settings.tabsOnAllSpaces
+            ? [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            : [.managed, .ignoresCycle, .fullScreenAuxiliary]
+        let view = panel.hostingView
+        view.toolTip = "Pinned: tuck to \(window.edge.displayName.lowercased()) edge  ·  ⌥-click to close"
+        view.onHover = { model.isHovered = $0 }
+        view.onClick = { [weak self] in
+            guard let self else { return }
+            if NSEvent.modifierFlags.contains(.option) {
+                self.manager.closeWindow(window)
+            } else {
+                Task { await self.manager.tuck(window) }
+            }
+        }
+        closeCovers[window.id] = panel
+        return panel
+    }
+}
+
+/// The close button of a pinned window, redrawn in amber: it tucks rather than closes.
+struct CloseCoverView: View {
+    let model: TuckButtonModel
+
+    var body: some View {
+        let amber = Color(red: 1, green: 0.71, blue: 0.23)
+        ZStack {
+            Circle().fill(amber)
+                .overlay(Circle().strokeBorder(Color(red: 0.82, green: 0.55, blue: 0.1), lineWidth: 0.5))
+            Image(systemName: "pin.fill")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(Color(red: 0.35, green: 0.2, blue: 0))
+                .opacity(model.isHovered ? 1 : 0)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
     }
 }
 

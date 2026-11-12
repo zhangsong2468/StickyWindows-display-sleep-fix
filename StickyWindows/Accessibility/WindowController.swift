@@ -8,6 +8,10 @@ struct WindowController {
     let pid: pid_t
 
     var title: String? { attribute(kAXTitleAttribute) as String? }
+    /// The document, folder or page the window shows, when its app reports one.
+    var documentURL: URL? { (attribute(kAXDocumentAttribute) as String?).flatMap { URL(string: $0) } }
+    /// Stands in for the window of a pinned tab whose window is closed; every query on it fails.
+    static var placeholder: WindowController { WindowController(element: AXUIElementCreateApplication(-1), pid: -1) }
     var isMinimized: Bool { attribute(kAXMinimizedAttribute) as Bool? ?? false }
     var subrole: String? { attribute(kAXSubroleAttribute) as String? }
     var isFullScreen: Bool { attribute("AXFullScreen") as Bool? ?? false }

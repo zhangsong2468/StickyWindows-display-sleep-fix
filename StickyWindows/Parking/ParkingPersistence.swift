@@ -13,6 +13,8 @@ struct ParkedRecord: Codable, Equatable {
     var groupID: UUID?
     var customTitle: String?
     var groupName: String?
+    var pinned: Bool?
+    var documentURL: URL?
 
     @MainActor
     init?(_ parkedWindow: ParkedWindow) {
@@ -27,6 +29,8 @@ struct ParkedRecord: Codable, Equatable {
         groupID = parkedWindow.groupID
         customTitle = parkedWindow.customTitle
         groupName = parkedWindow.groupName
+        pinned = parkedWindow.isPinned ? true : nil
+        documentURL = parkedWindow.documentURL
     }
 }
 

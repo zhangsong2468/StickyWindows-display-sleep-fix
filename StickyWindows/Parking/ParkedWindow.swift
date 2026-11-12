@@ -58,7 +58,7 @@ struct RevealSession {
 @Observable
 final class ParkedWindow: Identifiable {
     let id = UUID()
-    let window: WindowController
+    var window: WindowController
     let bundleID: String?
     let appName: String
     let icon: NSImage?
@@ -87,6 +87,15 @@ final class ParkedWindow: Identifiable {
     /// Set while a tuck is in flight so it isn't started twice.
     var isTransitioning = false
 
+    /// A pinned tab stays at the edge after its window closes or its app quits; clicking it opens the window again.
+    var isPinned = false
+    /// A pinned tab whose window is gone. `window` is a placeholder until it's opened again.
+    var isClosed = false
+    /// What the window was showing, to open again along with the app.
+    var documentURL: URL?
+    /// A pinned tab restored at launch takes its window back by itself until this time (apps still opening at login).
+    var restoreUntil: Date?
+
     /// The app's Dock badge text, if any.
     var badge: String?
     /// Window server ID, for thumbnails. Resolved when parked.
@@ -112,5 +121,27 @@ final class ParkedWindow: Identifiable {
         displayID = screen.flatMap(ScreenGeometry.displayID(of:))
         storedFrame = frame
         desiredOffset = offset ?? (edge.isVertical ? frame.midY : frame.midX)
+    }
+
+    /// A pinned tab from a previous run whose window isn't open.
+    init(closed record: ParkedRecord) {
+        window = .placeholder
+        bundleID = record.bundleID
+        let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: record.bundleID)
+        appName = appURL?.deletingPathExtension().lastPathComponent ?? "Window"
+        icon = appURL.map { NSWorkspace.shared.icon(forFile: $0.path) }
+        title = record.title
+        edge = record.edge
+        storedFrame = record.storedFrame
+        desiredOffset = CGFloat(record.desiredOffset)
+        displayID = record.displayID
+        customTitle = record.customTitle
+        groupName = record.groupName
+        groupID = record.groupID
+        mode = record.mode
+        documentURL = record.documentURL
+        hiddenBy = .minimize
+        isPinned = true
+        isClosed = true
     }
 }

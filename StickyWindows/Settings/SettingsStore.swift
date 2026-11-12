@@ -75,6 +75,10 @@ final class SettingsStore {
     var showTuckButton: Bool {
         didSet { save(showTuckButton, Key.showTuckButton, relayout: true) }
     }
+    /// The red close button of a pinned window that's out tucks it back instead of closing it.
+    var closeButtonTucksPinned: Bool {
+        didSet { save(closeButtonTucksPinned, Key.closeButtonTucksPinned, relayout: true) }
+    }
     /// Minutes a revealed window may go without being in front before it's tucked back; 0 leaves windows out.
     var idleTuckMinutes: Int {
         didSet { defaults.set(idleTuckMinutes, forKey: Key.idleTuckMinutes) }
@@ -169,6 +173,7 @@ final class SettingsStore {
         static let hoverToPeek = "hoverToPeek"
         static let hoverDelay = "hoverDelay"
         static let idleTuckMinutes = "idleTuckMinutes"
+        static let closeButtonTucksPinned = "closeButtonTucksPinned"
         static let animateWindows = "animateWindows"
         static let showTuckButton = "showTuckButton"
         static let tabsOnAllSpaces = "tabsOnAllSpaces"
@@ -195,6 +200,7 @@ final class SettingsStore {
         hoverToPeek = value(Key.hoverToPeek, default: false)
         hoverDelay = value(Key.hoverDelay, default: 0.35)
         idleTuckMinutes = value(Key.idleTuckMinutes, default: 0)
+        closeButtonTucksPinned = value(Key.closeButtonTucksPinned, default: false)
         animateWindows = value(Key.animateWindows, default: true)
         showTuckButton = value(Key.showTuckButton, default: true)
         tabsOnAllSpaces = value(Key.tabsOnAllSpaces, default: true)

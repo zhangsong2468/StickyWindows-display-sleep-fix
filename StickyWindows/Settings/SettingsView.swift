@@ -168,6 +168,10 @@ private struct GeneralSettings: View {
                     Text("Tuck idle windows back")
                     Text("A window that's been out this long without being in front goes back to its tab.")
                 }
+                Toggle(isOn: $settings.closeButtonTucksPinned) {
+                    Text("Close button tucks pinned windows")
+                    Text("While a pinned window is out, its red close button turns amber and tucks the window back instead of closing it; Option-click closes it. Pin a tab from its right-click menu. ⌘W and ⌘Q still close.")
+                }
                 Toggle(isOn: $settings.animateWindows) {
                     Text("Slide windows in and out")
                     if settings.reduceMotion {

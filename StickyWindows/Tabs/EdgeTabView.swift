@@ -15,7 +15,9 @@ struct EdgeTabView: View {
             .overlay { shape.strokeBorder(.primary.opacity(0.12), lineWidth: 0.5) }
             .overlay(alignment: parkedWindow.edge.isVertical ? .bottom : .trailing) { peekMarker(accent) }
             .overlay(alignment: badgeAlignment) { BadgeView(text: parkedWindow.badge) }
-            .opacity((parkedWindow.isPulledAway ? 0.55 : 1) * settings.tabOpacity)
+            .overlay(alignment: pinAlignment) { pinMarker }
+            // A pinned tab whose window is closed is drawn faded.
+            .opacity((parkedWindow.isPulledAway ? 0.55 : 1) * (parkedWindow.isClosed ? 0.6 : 1) * settings.tabOpacity)
             .scaleEffect(parkedWindow.isPulledAway ? 0.92 : 1)
             .animation(.easeOut(duration: 0.12), value: parkedWindow.isHovered)
             .animation(.easeOut(duration: 0.12), value: parkedWindow.isRevealed)
@@ -36,6 +38,26 @@ struct EdgeTabView: View {
                 .fill(accent)
                 .frame(width: 4, height: 4)
                 .padding(4)
+        }
+    }
+
+    /// Small pin marking tabs that stay after their window closes.
+    @ViewBuilder
+    private var pinMarker: some View {
+        if parkedWindow.isPinned {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.secondary)
+                .padding(3)
+        }
+    }
+
+    /// The corner the badge and the peek dot leave free.
+    private var pinAlignment: Alignment {
+        switch parkedWindow.edge {
+        case .right: .topTrailing
+        case .left: .topLeading
+        case .bottom: .bottomLeading
         }
     }
 
@@ -89,7 +111,7 @@ struct EdgeTabView: View {
     @ViewBuilder
     private var icon: some View {
         if let image = parkedWindow.icon {
-            Image(nsImage: image).resizable().interpolation(.high)
+            Image(nsImage: image).resizable().interpolation(.high).grayscale(parkedWindow.isClosed ? 1 : 0)
         } else {
             Image(systemName: "macwindow")
         }

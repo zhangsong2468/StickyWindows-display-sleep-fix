@@ -389,7 +389,7 @@ final class TabPresenter {
             let shortcut = item.isGroup ? "" : manager.shortcutHint(for: item.lead).map { "  (" + $0 + ")" } ?? ""
             panel.hostingView.toolTip = item.isGroup
                 ? (item.lead.groupName.map { $0 + ": " } ?? "\(item.windows.count) windows: ") + item.windows.map(\.displayTitle).joined(separator: ", ")
-                : "\(item.lead.appName) — \(item.lead.displayTitle)" + shortcut
+                : "\(item.lead.appName) — \(item.lead.displayTitle)" + shortcut + (item.lead.isClosed ? "  ·  click to open" : "")
             panel.orderFrontRegardless()
         }
     }
@@ -552,8 +552,13 @@ final class TabPresenter {
         if parkedWindow.isRevealed {
             menu.addItem(ClosureMenuItem("Hide") { Task { await manager.tuck(parkedWindow) } })
         } else {
-            menu.addItem(ClosureMenuItem("Show") { manager.reveal(parkedWindow) })
+            menu.addItem(ClosureMenuItem(parkedWindow.isClosed ? "Open" : "Show") { manager.reveal(parkedWindow) })
         }
+        let pin = ClosureMenuItem("Pin Tab", state: parkedWindow.isPinned ? .on : .off) {
+            manager.setPinned(!parkedWindow.isPinned, for: parkedWindow)
+        }
+        pin.toolTip = "A pinned tab stays at the edge after its window closes or its app quits. Click it to open the window again."
+        menu.addItem(pin)
 
         let modeMenu = NSMenu()
         for mode in RevealMode.allCases {
@@ -575,8 +580,12 @@ final class TabPresenter {
         })
 
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem("Release") { manager.release(parkedWindow) })
-        menu.addItem(ClosureMenuItem("Close Window") { manager.closeWindow(parkedWindow) })
+        if parkedWindow.isClosed {
+            menu.addItem(ClosureMenuItem("Remove Tab") { manager.release(parkedWindow) })
+        } else {
+            menu.addItem(ClosureMenuItem("Release") { manager.release(parkedWindow) })
+            menu.addItem(ClosureMenuItem("Close Window") { manager.closeWindow(parkedWindow) })
+        }
         return menu
     }
 

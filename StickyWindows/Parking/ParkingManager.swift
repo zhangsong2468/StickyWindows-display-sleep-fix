@@ -17,6 +17,8 @@ final class ParkingManager {
     @ObservationIgnored private lazy var tuckButtons = TuckButtonController(manager: self)
     @ObservationIgnored private let axEvents = AXWindowEvents()
     @ObservationIgnored private var hoverTasks: [UUID: Task<Void, Never>] = [:]
+    /// Pinned tabs waiting for their app to show a window after a click.
+    @ObservationIgnored private var reopenTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private let persistence = ParkingPersistence()
     @ObservationIgnored private var lastSavedRecords: [ParkedRecord]?
     /// Saved records not yet matched to a window (apps still launching at login, say).
@@ -154,7 +156,7 @@ final class ParkingManager {
         _ window: WindowController, edge: Edge, screen: NSScreen?,
         offset: CGFloat? = nil, restoreFrame: CGRect? = nil, mode: RevealMode? = nil,
         joining target: ParkedWindow? = nil, groupID: UUID? = nil, customTitle: String? = nil, groupName: String? = nil,
-        settleDelay: Duration = .zero
+        pinned: Bool = false, settleDelay: Duration = .zero
     ) async {
         guard let current = window.frame else { return NSSound.beep() }
         let app = NSRunningApplication(processIdentifier: window.pid)
@@ -176,6 +178,8 @@ final class ParkingManager {
             offset: target?.desiredOffset ?? offset)
         parkedWindow.mode = mode ?? previous?.mode
         parkedWindow.customTitle = customTitle ?? previous?.customTitle
+        parkedWindow.isPinned = pinned || previous?.isPinned == true
+        parkedWindow.documentURL = window.documentURL ?? previous?.documentURL
         if let target, parked.contains(where: { $0 === target }) {
             // Dropped onto an existing tab: share it.
             let id = target.groupID ?? UUID()
@@ -214,7 +218,8 @@ final class ParkingManager {
 
     func tabClicked(_ parkedWindow: ParkedWindow) async {
         hidePreview()
-        guard parkedWindow.window.isValid else { return remove(parkedWindow) }
+        if parkedWindow.isClosed { return reopen(parkedWindow) }
+        guard parkedWindow.window.isValid else { return windowGone(parkedWindow) }
         guard parkedWindow.isRevealed else { return reveal(parkedWindow, trigger: .click) }
         if parkedWindow.session?.trigger == .hover {
             // Clicking a hover peek keeps it out, following the tab's mode from here.
@@ -226,7 +231,12 @@ final class ParkingManager {
     }
 
     func reveal(_ parkedWindow: ParkedWindow, trigger: RevealSession.Trigger = .click) {
-        guard parkedWindow.window.isValid else { return remove(parkedWindow) }
+        guard !parkedWindow.isClosed else {
+            // Hovering a pinned tab doesn't launch its app; a click or the keyboard does.
+            if trigger == .click { reopen(parkedWindow) }
+            return
+        }
+        guard parkedWindow.window.isValid else { return windowGone(parkedWindow) }
         guard !parkedWindow.isRevealed, !parkedWindow.isTransitioning else { return }
         cancelHover(parkedWindow)
         let frontmost = NSWorkspace.shared.frontmostApplication
@@ -287,7 +297,7 @@ final class ParkingManager {
 
     func tuck(_ parkedWindow: ParkedWindow) async {
         guard parkedWindow.isRevealed, !parkedWindow.isTransitioning else { return }
-        guard parkedWindow.window.isValid else { return remove(parkedWindow) }
+        guard parkedWindow.window.isValid else { return windowGone(parkedWindow) }
         parkedWindow.isTransitioning = true
         defer { parkedWindow.isTransitioning = false }
         let session = parkedWindow.session
@@ -454,7 +464,8 @@ final class ParkingManager {
     /// Brings a parked window out, or to the front when it's already out.
     private func bringForward(_ parkedWindow: ParkedWindow) {
         hidePreview()
-        guard parkedWindow.window.isValid else { return remove(parkedWindow) }
+        if parkedWindow.isClosed { return reopen(parkedWindow) }
+        guard parkedWindow.window.isValid else { return windowGone(parkedWindow) }
         guard parkedWindow.isRevealed else { return reveal(parkedWindow, trigger: .click) }
         guard !parkedWindow.isTransitioning else { return }
         // As with clicking a hover peek: it stays out, following the tab's mode from here.
@@ -624,17 +635,18 @@ final class ParkingManager {
 
     /// Closes the underlying window. It's revealed first so a "Save changes?" sheet isn't left offscreen.
     func closeWindow(_ parkedWindow: ParkedWindow) {
+        guard !parkedWindow.isClosed else { return }
         reveal(parkedWindow)
         guard parkedWindow.window.close() else { return NSSound.beep() }
         Task {
             try? await Task.sleep(for: .milliseconds(500))
-            if !parkedWindow.window.isValid { remove(parkedWindow) }
+            if !parkedWindow.isClosed, !parkedWindow.window.isValid { windowGone(parkedWindow) }
         }
     }
 
     /// Restores a hidden window to its frame (a revealed one stays put) and removes the tab.
     func release(_ parkedWindow: ParkedWindow) {
-        if parkedWindow.window.isValid, !parkedWindow.isRevealed {
+        if !parkedWindow.isClosed, parkedWindow.window.isValid, !parkedWindow.isRevealed {
             bringBack(parkedWindow)
             parkedWindow.window.setFrame(parkedWindow.storedFrame)
         }
@@ -673,7 +685,7 @@ final class ParkingManager {
     /// reported invalid twice in a row, and nothing is dropped during the hold after wake.
     func removeInvalidWindows() {
         guard !isDisplayOrSystemSleeping, Date() >= removalHoldUntil else { return }
-        for parkedWindow in parked where !parkedWindow.isTransitioning {
+        for parkedWindow in parked where !parkedWindow.isTransitioning && !parkedWindow.isClosed {
             if parkedWindow.window.isValid {
                 invalidStrikes[parkedWindow.id] = nil
                 continue
@@ -687,7 +699,7 @@ final class ParkingManager {
                 NSRunningApplication(processIdentifier: parkedWindow.window.pid)?.unhide()
             }
             invalidStrikes[parkedWindow.id] = nil
-            remove(parkedWindow)
+            windowGone(parkedWindow)
         }
     }
 
@@ -716,7 +728,7 @@ final class ParkingManager {
         switch event {
         case .destroyed:
             if let parkedWindow = parked.first(where: { CFEqual($0.window.element, element) }) {
-                remove(parkedWindow)
+                windowGone(parkedWindow)
             }
         case .titleChanged:
             if let parkedWindow = parked.first(where: { CFEqual($0.window.element, element) }),
@@ -739,6 +751,8 @@ final class ParkingManager {
         let gone = parked.filter { $0.window.pid == pid }
         guard !gone.isEmpty else { return }
         for parkedWindow in gone { cancelHover(parkedWindow) }
+        // Pinned tabs stay behind without a window (which also takes them out of the removal below).
+        for parkedWindow in gone where parkedWindow.isPinned { markClosed(parkedWindow) }
         parked.removeAll { $0.window.pid == pid }
         axEvents.forget(pid: pid)
         dissolveSingletonGroups()
@@ -759,6 +773,149 @@ final class ParkingManager {
         parked.removeAll { $0 === parkedWindow }
     }
 
+    // MARK: Pinned tabs
+
+    /// Pins a tab so it stays at the edge after its window closes or its app quits. Unpinning a tab that has
+    /// no window removes it: there's nothing left for it to show.
+    func setPinned(_ pinned: Bool, for parkedWindow: ParkedWindow) {
+        parkedWindow.isPinned = pinned
+        if !pinned, parkedWindow.isClosed { return remove(parkedWindow) }
+        if pinned, !parkedWindow.isClosed, let url = parkedWindow.window.documentURL {
+            parkedWindow.documentURL = url
+        }
+        tuckButtons.refresh()
+    }
+
+    /// The window behind a tab went away: a pinned tab stays, any other goes with it.
+    private func windowGone(_ parkedWindow: ParkedWindow) {
+        guard !parkedWindow.isClosed else { return }
+        guard parkedWindow.isPinned, !isTerminating else { return remove(parkedWindow) }
+        markClosed(parkedWindow)
+    }
+
+    private func markClosed(_ parkedWindow: ParkedWindow) {
+        log.info("Keeping pinned tab for \(parkedWindow.appName, privacy: .public) '\(parkedWindow.displayTitle, privacy: .public)': window closed")
+        cancelHover(parkedWindow)
+        axEvents.unwatch(parkedWindow.window)
+        invalidStrikes[parkedWindow.id] = nil
+        lastInFront[parkedWindow.id] = nil
+        parkedWindow.window = .placeholder
+        parkedWindow.isClosed = true
+        // Not `.offscreen`: nothing should try to move a window that isn't there.
+        parkedWindow.hiddenBy = .minimize
+        parkedWindow.session = nil
+        parkedWindow.windowID = nil
+        tabs.sync()
+        tuckButtons.refresh()
+    }
+
+    /// Opens a pinned tab's window again: launches or activates its app (with what the window was showing, if
+    /// known), then takes the window that turns up.
+    private func reopen(_ parkedWindow: ParkedWindow) {
+        guard AXIsProcessTrusted() else { return onNeedsPermission() }
+        guard parkedWindow.isClosed, reopenTasks[parkedWindow.id] == nil else { return }
+        guard let bundleID = parkedWindow.bundleID,
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return NSSound.beep() }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        let before: [WindowController] = running.map { WindowController.windows(forPID: $0.processIdentifier) } ?? []
+        // Already open under the same title (reopened by hand, say): take it rather than open another.
+        if let match = before.first(where: { $0.title == parkedWindow.title && isReopenCandidate($0) }) {
+            return attach(match, to: parkedWindow)
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        var document: URL?
+        if let url = parkedWindow.documentURL {
+            let usable = url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : ["http", "https"].contains(url.scheme ?? "")
+            if usable { document = url }
+        }
+        if let document {
+            NSWorkspace.shared.open([document], withApplicationAt: appURL, configuration: configuration, completionHandler: nil)
+        } else {
+            // For a running app this is a Dock click: it brings its main window back.
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration, completionHandler: nil)
+        }
+        reopenTasks[parkedWindow.id] = Task { [weak self] in
+            defer { self?.reopenTasks[parkedWindow.id] = nil }
+            // Up to ~15 s for a launching app to show a window.
+            for attempt in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, parkedWindow.isClosed, self.parked.contains(where: { $0 === parkedWindow }) else { return }
+                guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { continue }
+                let pid = app.processIdentifier
+                let candidates = WindowController.windows(forPID: pid).filter { self.isReopenCandidate($0) }
+                var match = candidates.first(where: { $0.title == parkedWindow.title })
+                if match == nil {
+                    match = candidates.first(where: { candidate in !before.contains(where: { $0.isSameWindow(as: candidate) }) })
+                }
+                // No new window after a moment: the app came forward with one it already had.
+                if match == nil, attempt >= 2, let focused = WindowController.focusedWindow(forPID: pid) {
+                    match = candidates.first(where: { $0.isSameWindow(as: focused) })
+                }
+                if let match { return self.attach(match, to: parkedWindow) }
+            }
+        }
+    }
+
+    private func isReopenCandidate(_ window: WindowController) -> Bool {
+        window.subrole == kAXStandardWindowSubrole && !isParked(window)
+    }
+
+    /// Gives a pinned tab its window back and shows it where it last was.
+    private func attach(_ window: WindowController, to parkedWindow: ParkedWindow) {
+        parkedWindow.window = window
+        parkedWindow.isClosed = false
+        parkedWindow.restoreUntil = nil
+        parkedWindow.hiddenBy = nil
+        parkedWindow.session = RevealSession(trigger: .click)
+        parkedWindow.windowID = WindowInventory.windowID(for: window)
+        if let title = window.title, !title.isEmpty { parkedWindow.title = title }
+        if let url = window.documentURL { parkedWindow.documentURL = url }
+        axEvents.watch(window)
+        if window.isMinimized { window.setMinimized(false) }
+        if let app = NSRunningApplication(processIdentifier: window.pid), app.isHidden { app.unhide() }
+        let target = ScreenGeometry.fitted(parkedWindow.storedFrame)
+        parkedWindow.storedFrame = target
+        window.setFrame(target)
+        noteOwnActivation(of: window.pid)
+        window.raise()
+        tabs.sync()
+        tuckButtons.refresh()
+    }
+
+    /// A pinned tab from the last run whose window isn't open: shown at once, without a window.
+    private func addClosedTab(for record: ParkedRecord) {
+        let parkedWindow = ParkedWindow(closed: record)
+        parkedWindow.restoreUntil = Date() + 60
+        parked.append(parkedWindow)
+        tabs.sync()
+    }
+
+    /// For a minute after launch, a restored pinned tab tucks its window away again if it turns up under the
+    /// same title (apps still opening at login), as unpinned tabs do.
+    private func reattachRestoredPins() {
+        let now = Date()
+        for parkedWindow in parked where parkedWindow.isClosed && parkedWindow.restoreUntil != nil {
+            guard let until = parkedWindow.restoreUntil, now < until, reopenTasks[parkedWindow.id] == nil else {
+                parkedWindow.restoreUntil = nil
+                continue
+            }
+            guard let bundleID = parkedWindow.bundleID,
+                  let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+                  let match = WindowController.windows(forPID: app.processIdentifier).first(where: {
+                      $0.title == parkedWindow.title && !isParked($0)
+                  }) else { continue }
+            forget(parkedWindow)
+            Task {
+                await park(
+                    match, edge: parkedWindow.edge, screen: ScreenGeometry.screen(withDisplayID: parkedWindow.displayID),
+                    offset: parkedWindow.desiredOffset, restoreFrame: parkedWindow.storedFrame, mode: parkedWindow.mode,
+                    groupID: parkedWindow.groupID, customTitle: parkedWindow.customTitle, groupName: parkedWindow.groupName,
+                    pinned: true)
+            }
+        }
+    }
+
     // MARK: Hiding
 
     /// Tries, in order: hiding the app, an offscreen corner, minimizing.
@@ -767,6 +924,7 @@ final class ParkingManager {
     /// corner leaves a visible strip. Hiding the app leaves nothing, so it's preferred whenever it hides nothing
     /// else. Offscreen failure is remembered per app.
     private func hide(_ parkedWindow: ParkedWindow) async {
+        guard !parkedWindow.isClosed else { return }
         let window = parkedWindow.window
         let app = NSRunningApplication(processIdentifier: window.pid)
         if parkedWindow.hiddenBy == .minimize, window.isMinimized { return }
@@ -1034,6 +1192,7 @@ final class ParkingManager {
         if housekeepingTicks % 2 == 0 { refreshBadges() }
         restoreSavedIfNeeded()
         if !pendingRestore.isEmpty { attemptRestore() }
+        reattachRestoredPins()
         saveIfChanged()
     }
 
@@ -1070,7 +1229,12 @@ final class ParkingManager {
         var remaining: [ParkedRecord] = []
         for record in pendingRestore {
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: record.bundleID).first else {
-                if stillWaiting { remaining.append(record) }
+                // A pinned tab doesn't wait for its app: it shows right away, without a window.
+                if record.pinned == true {
+                    addClosedTab(for: record)
+                } else if stillWaiting {
+                    remaining.append(record)
+                }
                 continue
             }
             let match = WindowController.windows(forPID: app.processIdentifier).first {
@@ -1082,8 +1246,12 @@ final class ParkingManager {
                     await park(
                         match, edge: record.edge, screen: ScreenGeometry.screen(withDisplayID: record.displayID),
                         offset: record.desiredOffset, restoreFrame: record.storedFrame, mode: record.mode,
-                        groupID: record.groupID, customTitle: record.customTitle, groupName: record.groupName)
+                        groupID: record.groupID, customTitle: record.customTitle, groupName: record.groupName,
+                        pinned: record.pinned == true)
                 }
+            } else if record.pinned == true {
+                // Shown now; it takes its window back if one turns up under the same title.
+                addClosedTab(for: record)
             } else if stillWaiting {
                 remaining.append(record)
             } else {
