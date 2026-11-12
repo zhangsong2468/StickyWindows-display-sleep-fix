@@ -30,6 +30,9 @@ final class ParkingManager {
     @ObservationIgnored private var invalidStrikes: [UUID: Int] = [:]
     /// No tabs are dropped until this time: apps answer slowly or not at all for a while after wake.
     @ObservationIgnored private var removalHoldUntil = Date.distantPast
+    /// Accessibility window references may become invalid while the display is asleep.
+    /// Keep parked records until the display wakes and its window server has settled.
+    @ObservationIgnored private var isDisplayOrSystemSleeping = false
     @ObservationIgnored private let badgeReader = DockBadgeReader()
     @ObservationIgnored private let thumbnails = ThumbnailProvider()
     @ObservationIgnored private lazy var preview = PreviewPanel()
@@ -53,6 +56,11 @@ final class ParkingManager {
             }
         }
         let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.willSleep() }
+            }
+        }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
             workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.didWake() }
@@ -500,7 +508,7 @@ final class ParkingManager {
     /// Safety net for windows that vanished without a destroyed notification. Conservative: a window has to be
     /// reported invalid twice in a row, and nothing is dropped during the hold after wake.
     func removeInvalidWindows() {
-        guard Date() >= removalHoldUntil else { return }
+        guard !isDisplayOrSystemSleeping, Date() >= removalHoldUntil else { return }
         for parkedWindow in parked where !parkedWindow.isTransitioning {
             if parkedWindow.window.isValid {
                 invalidStrikes[parkedWindow.id] = nil
@@ -519,8 +527,15 @@ final class ParkingManager {
         }
     }
 
+    private func willSleep() {
+        isDisplayOrSystemSleeping = true
+        invalidStrikes.removeAll()
+        log.info("System or display sleeping; tab removal suspended")
+    }
+
     /// After sleep: hold off dropping tabs while apps wake up, then put everything back where it belongs.
     private func didWake() {
+        isDisplayOrSystemSleeping = false
         removalHoldUntil = Date() + 20
         invalidStrikes.removeAll()
         log.info("Woke from sleep; tab removal held for 20 s")
