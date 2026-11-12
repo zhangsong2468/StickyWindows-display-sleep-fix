@@ -7,8 +7,10 @@ if ! xcrun --find xcodebuild >/dev/null 2>&1; then
     exit 1
 fi
 
+# BUILD_ARCHS=arm64 builds a single slice; the default matches the project's universal Release build.
 xcodebuild -project StickyWindows.xcodeproj -scheme StickyWindows \
     -configuration Release -derivedDataPath "$PWD/build" \
+    ARCHS="${BUILD_ARCHS:-arm64 x86_64}" ONLY_ACTIVE_ARCH=NO \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
     MARKETING_VERSION=0.5.0 CURRENT_PROJECT_VERSION=51 build
 

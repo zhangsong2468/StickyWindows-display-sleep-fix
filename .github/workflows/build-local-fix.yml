@@ -12,23 +12,41 @@ permissions:
 
 jobs:
   build:
-    # macOS 26 image: Xcode 26 is needed for the Icon Composer app icon.
+    # macOS 26 image: Xcode 26 or newer is needed for the Icon Composer app icon.
     runs-on: macos-26
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # default: the image's preselected Xcode. newest: the highest version installed on the image
+        # (the official 0.5.0 was built with Xcode 27.1).
+        xcode: [default, newest]
+    env:
+      # Swift 6.3.3 (Xcode 26.6) crashes compiling the x86_64 slice; the target Mac is Apple silicon.
+      BUILD_ARCHS: arm64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Xcode version
-        run: xcodebuild -version
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          if [ "${{ matrix.xcode }}" = newest ]; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          fi
+          xcodebuild -version
 
       - name: Build and package
         run: bash build-local.sh
 
-      - name: Checksum
-        run: shasum -a 256 dist/*.zip
+      - name: Inspect
+        run: |
+          app="build/Build/Products/Release/Sticky Windows.app"
+          lipo -archs "$app/Contents/MacOS/Sticky Windows"
+          codesign -dv "$app" 2>&1
+          shasum -a 256 dist/*.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: StickyWindows-0.5.0-display-sleep-fix
+          name: StickyWindows-0.5.0-display-sleep-fix-xcode-${{ matrix.xcode }}
           path: dist/*.zip
           if-no-files-found: error

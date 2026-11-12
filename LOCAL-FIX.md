@@ -25,7 +25,8 @@ bash build-local.sh
 
 没有本机 Xcode 时，用 GitHub Actions 构建：推送 `display-sleep-fix` 分支会触发
 `.github/workflows/build-local-fix.yml`，在 macOS 26 构建机上运行同一个脚本，
-产物以 artifact 形式附在该次运行上。
+产物以 artifact 形式附在该次运行上。云端只编译 arm64（`BUILD_ARCHS=arm64`）：
+Xcode 26.6 自带的 Swift 6.3.3 在编译 x86_64 切片时编译器崩溃。
 
 脚本使用归档中自带的 Xcode 工程，不依赖 XcodeGen，不使用原作者签名团队。
 输出为本地 ad-hoc 签名，未经过 Apple 公证；安装后可能需要重新授予辅助功能权限。
