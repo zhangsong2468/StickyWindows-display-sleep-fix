@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import Observation
 import os
 
@@ -33,6 +34,15 @@ final class ParkingManager {
     /// Accessibility window references may become invalid while the display is asleep.
     /// Keep parked records until the display wakes and its window server has settled.
     @ObservationIgnored private var isDisplayOrSystemSleeping = false
+    /// Switched from the keyboard or menu to take every tab off screen (screen sharing, say). Not saved: the
+    /// tabs are back after a relaunch.
+    private(set) var areTabsHidden = false
+    @ObservationIgnored var onTabsHiddenChanged: (Bool) -> Void = { _ in }
+    /// The window the keyboard last brought out, so next/previous carries on from it once it's tucked again.
+    @ObservationIgnored private var lastKeyboardTargetID: UUID?
+    /// When each revealed window was last seen in front, for the idle tuck.
+    @ObservationIgnored private var lastInFront: [UUID: Date] = [:]
+    @ObservationIgnored private var lastIdleCheck = Date.distantPast
     @ObservationIgnored private let badgeReader = DockBadgeReader()
     @ObservationIgnored private let thumbnails = ThumbnailProvider()
     @ObservationIgnored private lazy var preview = PreviewPanel()
@@ -335,6 +345,160 @@ final class ParkingManager {
         hoverTasks[parkedWindow.id]?.cancel()
         hoverTasks[parkedWindow.id] = nil
         hidePreview()
+    }
+
+    // MARK: Keyboard
+
+    /// Parked windows in the order the keyboard counts them: display by display, the left edge from the top,
+    /// then the right edge, then the bottom edge from the left. Windows sharing a tab follow one another.
+    var keyboardOrder: [ParkedWindow] {
+        let displays = NSScreen.screens.compactMap { ScreenGeometry.displayID(of: $0) }
+        var ranked: [(display: Int, edge: Int, offset: CGFloat, index: Int, window: ParkedWindow)] = []
+        for (index, parkedWindow) in parked.enumerated() {
+            let display = parkedWindow.displayID.flatMap { displays.firstIndex(of: $0) } ?? displays.count
+            let edge = Edge.allCases.firstIndex(of: parkedWindow.edge) ?? 0
+            // The index keeps windows sharing a tab in parked order.
+            ranked.append((display, edge, parkedWindow.desiredOffset, index, parkedWindow))
+        }
+        ranked.sort { ($0.display, $0.edge, $0.offset, $0.index) < ($1.display, $1.edge, $1.offset, $1.index) }
+        return ranked.map { $0.window }
+    }
+
+    /// The shortcut that brings this window out by number, for its tab's tooltip.
+    func shortcutHint(for parkedWindow: ParkedWindow) -> String? {
+        let names = KeyboardShortcuts.Name.showParkedByNumber
+        guard let index = keyboardOrder.firstIndex(where: { $0 === parkedWindow }), names.indices.contains(index),
+              let shortcut = KeyboardShortcuts.getShortcut(for: names[index]) else { return nil }
+        return shortcut.description
+    }
+
+    /// Brings out the next (`step` 1) or previous (-1) parked window and puts the one that had focus away, so
+    /// repeated presses flip through them one at a time.
+    func showAdjacentParked(step: Int) async {
+        guard AXIsProcessTrusted() else { return onNeedsPermission() }
+        let order = keyboardOrder
+        guard !order.isEmpty else { return NSSound.beep() }
+        let current = focusedParkedWindow()
+        let anchor = current ?? order.first { $0.id == lastKeyboardTargetID }
+        let target: ParkedWindow
+        if let anchor, let index = order.firstIndex(where: { $0 === anchor }) {
+            target = order[((index + step) % order.count + order.count) % order.count]
+        } else {
+            target = step > 0 ? order[0] : order[order.count - 1]
+        }
+        lastKeyboardTargetID = target.id
+        guard let current else { return bringForward(target) }
+        // The only parked window: the shortcut toggles it.
+        guard target !== current else { return await tuckReturningFocus(current) }
+        // Focus goes back to wherever the user was before they started flipping through, not to the window
+        // that's about to be tucked.
+        let origin = current.session?.previousApp
+        bringForward(target)
+        target.session?.previousApp = origin?.processIdentifier == target.window.pid ? nil : origin
+        await tuck(current)
+        // Hiding the tucked window's app can hand focus to some other app; the window just brought out keeps it.
+        if target.isRevealed, NSWorkspace.shared.frontmostApplication?.processIdentifier != target.window.pid {
+            noteOwnActivation(of: target.window.pid)
+            target.window.raise()
+        }
+    }
+
+    /// Brings out the `number`th parked window (counting from 1); pressed again while that window is in front,
+    /// tucks it back.
+    func toggleParked(number: Int) async {
+        guard AXIsProcessTrusted() else { return onNeedsPermission() }
+        let order = keyboardOrder
+        guard order.indices.contains(number - 1) else { return NSSound.beep() }
+        let target = order[number - 1]
+        lastKeyboardTargetID = target.id
+        if target === focusedParkedWindow() {
+            await tuckReturningFocus(target)
+        } else {
+            bringForward(target)
+        }
+    }
+
+    /// Puts every window that's out back behind its tab.
+    func tuckAll() async {
+        let out = parked.filter { $0.isRevealed && !$0.isTransitioning }
+        guard !out.isEmpty else { return }
+        let focused = focusedParkedWindow()
+        let others = out.filter { $0 !== focused }.map { parkedWindow in
+            Task { await self.tuck(parkedWindow) }
+        }
+        if let focused { await tuckReturningFocus(focused) }
+        for task in others { await task.value }
+    }
+
+    /// Takes every tab off screen until switched back. Parked windows stay parked, and the shortcuts still
+    /// reach them.
+    func setTabsHidden(_ hidden: Bool) {
+        guard hidden != areTabsHidden else { return }
+        areTabsHidden = hidden
+        if hidden {
+            // A hover in progress would otherwise still open its preview or peek.
+            for parkedWindow in parked { cancelHover(parkedWindow) }
+        }
+        updateFullScreenSuppression()
+        onTabsHiddenChanged(hidden)
+    }
+
+    /// The revealed parked window that has keyboard focus, if one does.
+    private func focusedParkedWindow() -> ParkedWindow? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let candidates = parked.filter { $0.isRevealed && $0.window.pid == pid }
+        guard !candidates.isEmpty, let focused = WindowController.focusedWindow(forPID: pid) else { return nil }
+        return candidates.first { $0.window.isSameWindow(as: focused) }
+    }
+
+    /// Brings a parked window out, or to the front when it's already out.
+    private func bringForward(_ parkedWindow: ParkedWindow) {
+        hidePreview()
+        guard parkedWindow.window.isValid else { return remove(parkedWindow) }
+        guard parkedWindow.isRevealed else { return reveal(parkedWindow, trigger: .click) }
+        guard !parkedWindow.isTransitioning else { return }
+        // As with clicking a hover peek: it stays out, following the tab's mode from here.
+        if parkedWindow.session?.trigger == .hover { parkedWindow.session?.trigger = .click }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.processIdentifier != parkedWindow.window.pid { parkedWindow.session?.previousApp = frontmost }
+        noteOwnActivation(of: parkedWindow.window.pid)
+        parkedWindow.window.raise()
+    }
+
+    /// Tucks a window from the keyboard and hands focus back to the app that had it before, as a hover peek
+    /// does; otherwise the keys would keep going to a window that's no longer on screen.
+    private func tuckReturningFocus(_ parkedWindow: ParkedWindow) async {
+        let previous = parkedWindow.session?.previousApp
+        await tuck(parkedWindow)
+        guard !parkedWindow.isRevealed, let previous, !previous.isTerminated, !previous.isHidden,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == parkedWindow.window.pid else { return }
+        noteOwnActivation(of: previous.processIdentifier)
+        previous.activate()
+    }
+
+    /// Tucks windows that have been out, but not in front, for the idle time chosen in Settings.
+    private func tuckIdleWindows() {
+        let now = Date()
+        // A gap between ticks means the Mac slept or stalled; time away doesn't count as idling.
+        let resumed = now.timeIntervalSince(lastIdleCheck) > 10
+        lastIdleCheck = now
+        let limit = TimeInterval(settings.idleTuckMinutes) * 60
+        let out = parked.filter { $0.isRevealed && !$0.isTransitioning }
+        guard limit > 0, !out.isEmpty, !resumed, !isDisplayOrSystemSleeping, now >= removalHoldUntil else {
+            return lastInFront.removeAll()
+        }
+        let focused = focusedParkedWindow()
+        var seen: [UUID: Date] = [:]
+        for parkedWindow in out {
+            let since = parkedWindow === focused ? now : lastInFront[parkedWindow.id] ?? now
+            seen[parkedWindow.id] = since
+            // Not mid-drag, and a full-screen window can't slide to an edge.
+            guard now.timeIntervalSince(since) >= limit, NSEvent.pressedMouseButtons == 0,
+                  !parkedWindow.window.isFullScreen else { continue }
+            log.info("Tucking \(parkedWindow.appName, privacy: .public): idle for \(Int(limit / 60), privacy: .public) min")
+            Task { await self.tuck(parkedWindow) }
+        }
+        lastInFront = seen
     }
 
     // MARK: Previews
@@ -844,8 +1008,10 @@ final class ParkingManager {
         retuckCorners(pid: nil, except: nil)
     }
 
-    /// Hides all tabs while a full-screen window is in front, if the user wants that.
+    /// Hides all tabs while the user has them switched off, or while a full-screen window is in front if the
+    /// user wants that.
     func updateFullScreenSuppression() {
+        guard !areTabsHidden else { return tabs.setSuppressed(true) }
         guard settings.hideTabsInFullScreen, AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
@@ -864,6 +1030,7 @@ final class ParkingManager {
         updateFullScreenSuppression()
         tuckButtons.refresh()
         if housekeepingTicks % 3 == 0 { removeInvalidWindows() }
+        tuckIdleWindows()
         if housekeepingTicks % 2 == 0 { refreshBadges() }
         restoreSavedIfNeeded()
         if !pendingRestore.isEmpty { attemptRestore() }

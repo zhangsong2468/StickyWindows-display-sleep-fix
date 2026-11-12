@@ -1,6 +1,6 @@
-name: Build display-sleep fix
+name: Build local patches
 
-# Unsigned (ad-hoc) build of the local display-sleep patch, for personal use. No signing or notary
+# Unsigned (ad-hoc) build of the local patches, for personal use. No signing or notary
 # secrets needed; the .zip is attached to the run as an artifact. See LOCAL-FIX.md.
 on:
   push:
@@ -33,6 +33,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: StickyWindows-0.5.0-display-sleep-fix
+          name: StickyWindows-0.5.0-local-52
           path: dist/*.zip
           if-no-files-found: error

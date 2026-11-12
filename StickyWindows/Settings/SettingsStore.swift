@@ -75,6 +75,10 @@ final class SettingsStore {
     var showTuckButton: Bool {
         didSet { save(showTuckButton, Key.showTuckButton, relayout: true) }
     }
+    /// Minutes a revealed window may go without being in front before it's tucked back; 0 leaves windows out.
+    var idleTuckMinutes: Int {
+        didSet { defaults.set(idleTuckMinutes, forKey: Key.idleTuckMinutes) }
+    }
     /// Slide windows in and out. Reduce Motion always wins.
     var animateWindows: Bool {
         didSet { defaults.set(animateWindows, forKey: Key.animateWindows) }
@@ -164,6 +168,7 @@ final class SettingsStore {
         static let defaultRevealMode = "defaultRevealMode"
         static let hoverToPeek = "hoverToPeek"
         static let hoverDelay = "hoverDelay"
+        static let idleTuckMinutes = "idleTuckMinutes"
         static let animateWindows = "animateWindows"
         static let showTuckButton = "showTuckButton"
         static let tabsOnAllSpaces = "tabsOnAllSpaces"
@@ -189,6 +194,7 @@ final class SettingsStore {
         defaultRevealMode = defaults.string(forKey: Key.defaultRevealMode).flatMap(RevealMode.init) ?? .popOut
         hoverToPeek = value(Key.hoverToPeek, default: false)
         hoverDelay = value(Key.hoverDelay, default: 0.35)
+        idleTuckMinutes = value(Key.idleTuckMinutes, default: 0)
         animateWindows = value(Key.animateWindows, default: true)
         showTuckButton = value(Key.showTuckButton, default: true)
         tabsOnAllSpaces = value(Key.tabsOnAllSpaces, default: true)

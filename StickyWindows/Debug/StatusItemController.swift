@@ -80,6 +80,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(ClosureMenuItem("Hover Tabs to Peek", state: parking.settings.hoverToPeek ? .on : .off) {
             [parking] in parking.settings.hoverToPeek.toggle()
         })
+        let hideTabs = ClosureMenuItem("Hide Tabs", state: parking.areTabsHidden ? .on : .off) {
+            [parking] in parking.setTabsHidden(!parking.areTabsHidden)
+        }
+        hideTabs.toolTip = "Takes the edge tabs off screen, for screen sharing or presenting. Parked windows stay parked, and the keyboard shortcuts still bring them out."
+        menu.addItem(hideTabs)
 
         let override = item("Let Sticky Windows Handle Left/Right Edge Drags", action: #selector(toggleTilingOverride))
         override.state = tilingOverride.isEnabled ? .on : .off
@@ -94,14 +99,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         if !parking.parked.isEmpty {
             menu.addItem(disabled("Parked (\(parking.parked.count))"))
-            for parkedWindow in parking.parked {
-                let entry = item("\(parkedWindow.appName) — \(truncate(parkedWindow.displayTitle, limit: 40))",
+            // Numbered as the "show parked window N" shortcuts count them.
+            for (index, parkedWindow) in parking.keyboardOrder.enumerated() {
+                let entry = item("\(index + 1). \(parkedWindow.appName) — \(truncate(parkedWindow.displayTitle, limit: 40))",
                                  action: #selector(releaseParked(_:)))
                 entry.representedObject = parkedWindow.id
                 entry.image = parkedWindow.icon.map(Self.menuIcon)
                 entry.toolTip = "Release: restore the window and remove its tab. Hidden by \(parkedWindow.hiddenBy?.rawValue ?? "— (revealed)")."
                 entry.indentationLevel = 1
                 menu.addItem(entry)
+            }
+            if parking.parked.contains(where: { $0.isRevealed }) {
+                menu.addItem(ClosureMenuItem("Tuck All Away") { [parking] in Task { await parking.tuckAll() } })
             }
             menu.addItem(item("Release All", action: #selector(releaseAll)))
         }
@@ -154,6 +163,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(item("Recover Off-Screen Windows", action: #selector(recoverOffscreen)))
         menu.addItem(item("Reset Per-App Hiding Strategies", action: #selector(resetStrategies)))
         return menu
+    }
+
+    /// Dims the menu-bar icon while the tabs are switched off, so it's clear why the edges are empty.
+    func tabsHiddenChanged(_ hidden: Bool) {
+        statusItem.button?.appearsDisabled = hidden
     }
 
     @objc private func raiseWindow(_ sender: NSMenuItem) {

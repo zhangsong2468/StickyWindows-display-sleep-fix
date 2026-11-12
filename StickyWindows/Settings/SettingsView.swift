@@ -159,6 +159,15 @@ private struct GeneralSettings: View {
                     Text("A small amber handle on the top edge of windows you've parked, while they're out. Click it to tuck the window back; Option-click to release it.")
                 }
                 TuckButtonIllustration().padding(.leading, 2)
+                Picker(selection: $settings.idleTuckMinutes) {
+                    Text("Never").tag(0)
+                    ForEach([1, 2, 5, 10, 15, 30, 60], id: \.self) { minutes in
+                        Text("After \(minutes) min").tag(minutes)
+                    }
+                } label: {
+                    Text("Tuck idle windows back")
+                    Text("A window that's been out this long without being in front goes back to its tab.")
+                }
                 Toggle(isOn: $settings.animateWindows) {
                     Text("Slide windows in and out")
                     if settings.reduceMotion {
@@ -246,6 +255,26 @@ private struct ShortcutSettings: View {
                 KeyboardShortcuts.Recorder("Park frontmost window on bottom edge:", name: .parkFrontmostBottom)
             } footer: {
                 Text("Pressing a park shortcut on a window that's already parked and revealed tucks it away again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                KeyboardShortcuts.Recorder("Show next parked window:", name: .showNextParked)
+                KeyboardShortcuts.Recorder("Show previous parked window:", name: .showPreviousParked)
+                KeyboardShortcuts.Recorder("Tuck all windows away:", name: .tuckAllParked)
+                KeyboardShortcuts.Recorder("Hide or show the tabs:", name: .toggleTabsHidden)
+            } footer: {
+                Text("Next and previous bring one parked window out and put the one that had focus away. Hiding the tabs (for screen sharing, say) leaves windows parked; the shortcuts still reach them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                ForEach(Array(KeyboardShortcuts.Name.showParkedByNumber.enumerated()), id: \.offset) { index, name in
+                    let title: String = "Show parked window \(index + 1):"
+                    KeyboardShortcuts.Recorder(title, name: name)
+                }
+            } footer: {
+                Text("Windows are numbered along the left edge from the top, then the right edge, then the bottom edge; a tab's tooltip and the menu-bar list show its number. Pressing the shortcut again while the window is in front tucks it back.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

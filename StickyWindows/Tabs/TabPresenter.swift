@@ -386,9 +386,10 @@ final class TabPresenter {
             } else {
                 panel.setFrame(frame, display: true)
             }
+            let shortcut = item.isGroup ? "" : manager.shortcutHint(for: item.lead).map { "  (" + $0 + ")" } ?? ""
             panel.hostingView.toolTip = item.isGroup
                 ? (item.lead.groupName.map { $0 + ": " } ?? "\(item.windows.count) windows: ") + item.windows.map(\.displayTitle).joined(separator: ", ")
-                : "\(item.lead.appName) — \(item.lead.displayTitle)"
+                : "\(item.lead.appName) — \(item.lead.displayTitle)" + shortcut
             panel.orderFrontRegardless()
         }
     }

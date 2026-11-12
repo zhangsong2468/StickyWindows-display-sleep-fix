@@ -42,6 +42,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { await parking.parkFrontmostWindow(to: edge) }
             }
         }
+        let stepShortcuts: [(name: KeyboardShortcuts.Name, step: Int)] = [(.showNextParked, 1), (.showPreviousParked, -1)]
+        for (name, step) in stepShortcuts {
+            KeyboardShortcuts.onKeyUp(for: name) { [weak self] in
+                guard let parking = self?.parking else { return }
+                Task { await parking.showAdjacentParked(step: step) }
+            }
+        }
+        for (index, name) in KeyboardShortcuts.Name.showParkedByNumber.enumerated() {
+            KeyboardShortcuts.onKeyUp(for: name) { [weak self] in
+                guard let parking = self?.parking else { return }
+                Task { await parking.toggleParked(number: index + 1) }
+            }
+        }
+        KeyboardShortcuts.onKeyUp(for: .tuckAllParked) { [weak self] in
+            guard let parking = self?.parking else { return }
+            Task { await parking.tuckAll() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .toggleTabsHidden) { [weak self] in
+            guard let parking = self?.parking else { return }
+            parking.setTabsHidden(!parking.areTabsHidden)
+        }
+        parking.onTabsHiddenChanged = { [weak self] hidden in self?.statusItemController?.tabsHiddenChanged(hidden) }
 
         windowObserver.onDrop = { [weak self] drop in
             guard let parking = self?.parking else { return }
